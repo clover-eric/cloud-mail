@@ -166,8 +166,8 @@ const proxyService = {
 	},
 
 	async signingKey(env) {
-		if (!env.jwt_secret) {
-			throw new Error('Missing jwt_secret for image proxy');
+		if (typeof env.jwt_secret !== 'string' || encoder.encode(env.jwt_secret).byteLength < 32) {
+			throw new Error('JWT_SECRET must contain at least 32 bytes for image proxy signing');
 		}
 		const algorithm = { name: 'HMAC', hash: 'SHA-256' };
 		const root = await crypto.subtle.importKey('raw', encoder.encode(env.jwt_secret), algorithm, false, ['sign']);

@@ -2,12 +2,11 @@ import settingService from '../service/setting-service';
 import userService from '../service/user-service';
 
 const dbInit = {
-	async init(c) {
+	async init(c, secret) {
 
-		const secret = c.req.param('secret');
-
-		if (secret !== c.env.jwt_secret) {
-			return c.text('❌ JWT secret mismatch');
+		if (typeof c.env.jwt_secret !== 'string' || new TextEncoder().encode(c.env.jwt_secret).byteLength < 32 ||
+			typeof secret !== 'string' || secret !== c.env.jwt_secret) {
+			return c.text('Unauthorized', 401);
 		}
 
 		await this.intDB(c);

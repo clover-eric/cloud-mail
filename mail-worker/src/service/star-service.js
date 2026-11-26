@@ -64,15 +64,13 @@ const starService = {
 			.limit(size)
 			.all();
 
-		if (full) {
-			const emailIds = list.map(item => item.emailId);
-			const attsList = await attService.selectByEmailIds(c, emailIds);
-			list.forEach(emailRow => {
-				emailRow.attList = attsList.filter(attsRow => attsRow.emailId === emailRow.emailId);
-			});
-			// 星标完整查询同样走图片代理改写。
-			await proxyService.rewriteList(c, list);
-		} else {
+			if (full) {
+				const emailIds = list.map(item => item.emailId);
+				const attsList = await attService.selectByEmailIds(c, emailIds);
+				// 星标完整查询同样走图片代理改写。
+				await proxyService.rewriteList(c, list);
+				await attService.addEmailDownloadUrls(c, list, attsList);
+			} else {
 			list.forEach(emailRow => {
 				emailRow.listText = emailService.toListText(emailRow);
 				delete emailRow.text;

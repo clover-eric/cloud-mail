@@ -1,6 +1,5 @@
 import BizError from '../error/biz-error';
 import orm from '../entity/orm';
-import { v4 as uuidv4 } from 'uuid';
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import saltHashUtils from '../utils/crypto-utils';
 import cryptoUtils from '../utils/crypto-utils';
@@ -12,9 +11,16 @@ import reqUtils from '../utils/req-utils';
 import dayjs from 'dayjs';
 import { isDel, roleConst } from '../const/entity-const';
 import email from '../entity/email';
+import attService from './att-service';
 import userService from './user-service';
-import KvConst from '../const/kv-const';
 import proxyService from './proxy-service';
+import publicTokenUtils from '../utils/public-token';
+
+function createPublicToken() {
+	const bytes = new Uint8Array(32);
+	crypto.getRandomValues(bytes);
+	return btoa(String.fromCharCode(...bytes)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
 
 const publicService = {
 
@@ -93,13 +99,18 @@ const publicService = {
 
 		const rows = await query.limit(size).offset(num);
 		// 公开邮件列表也把外链图改成 /proxy?url=。
-		return proxyService.rewriteList(c, rows);
+		await proxyService.rewriteList(c, rows);
+		await attService.addEmailDownloadUrls(c, rows);
+		return rows;
 
 	},
 
 	async addUser(c, params) {
 		const { list } = params;
 
+		if (!Array.isArray(list)) {
+			throw new BizError('Invalid user list');
+		}
 		if (list.length === 0) return;
 
 		for (const emailRow of list) {
@@ -126,6 +137,9 @@ const publicService = {
 
 		const roleList = await roleService.roleSelectUse(c);
 		const defRole = roleList.find(roleRow => roleRow.isDefault === roleConst.isDefault.OPEN);
+		if (!defRole) {
+			throw new BizError('Default role is not configured');
+		}
 
 		const userList = [];
 
@@ -139,13 +153,15 @@ const publicService = {
 			}
 
 			const userSql = `INSERT INTO user (email, password, salt, type, os, browser, active_ip, create_ip, device, active_time, create_time)
-			VALUES ('${email}', '${hash}', '${salt}', '${type}', '${os}', '${browser}', '${activeIp}', '${activeIp}', '${device}', '${activeTime}', '${activeTime}')`
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
-			const accountSql = `INSERT INTO account (email, name, user_id)
-			VALUES ('${email}', '${emailUtils.getName(email)}', 0);`;
+			const accountSql = `INSERT INTO account (email, name, user_id) VALUES (?, ?, 0)`;
 
-			userList.push(c.env.db.prepare(userSql));
-			userList.push(c.env.db.prepare(accountSql));
+			userList.push(c.env.db.prepare(userSql).bind(
+				email, hash, salt, type, os || null, browser || null,
+				activeIp, activeIp, device || null, activeTime, activeTime
+			));
+			userList.push(c.env.db.prepare(accountSql).bind(email, emailUtils.getName(email)));
 
 		}
 
@@ -154,7 +170,7 @@ const publicService = {
 		try {
 			await c.env.db.batch(userList);
 		} catch (e) {
-			if(e.message.includes('SQLITE_CONSTRAINT')) {
+			if(String(e?.message || e).includes('SQLITE_CONSTRAINT')) {
 				throw new BizError(t('emailExistDatabase'))
 			} else {
 				throw e
@@ -164,14 +180,36 @@ const publicService = {
 	},
 
 	async genToken(c, params) {
+		await this.verifyUser(c, params);
 
-		await this.verifyUser(c, params)
+		const allowedScopes = new Set(['email:read', 'user:create']);
+		const scopes = params.scopes;
+		if (!Array.isArray(scopes) || scopes.length === 0 || scopes.some(scope => !allowedScopes.has(scope)) || new Set(scopes).size !== scopes.length) {
+			throw new BizError('Choose one or more valid public token scopes');
+		}
 
-		const uuid = uuidv4();
+		const expiresInDays = params.expiresInDays === undefined ? 30 : Number(params.expiresInDays);
+		if (!Number.isInteger(expiresInDays) || expiresInDays < 1 || expiresInDays > 90) {
+			throw new BizError('Public token expiry must be between 1 and 90 days');
+		}
 
-		await c.env.kv.put(KvConst.PUBLIC_KEY, uuid);
+		const token = createPublicToken();
+		const expiresAt = Date.now() + expiresInDays * 24 * 60 * 60 * 1000;
+		const key = await publicTokenUtils.publicTokenStorageKey(token);
+		await c.env.kv.put(key, JSON.stringify({ scopes, expiresAt }), {
+			expirationTtl: expiresInDays * 24 * 60 * 60
+		});
 
-		return {token: uuid}
+		return { token, scopes, expiresAt: new Date(expiresAt).toISOString() };
+	},
+
+	async revokeToken(c, params) {
+		await this.verifyUser(c, params);
+		const key = await publicTokenUtils.publicTokenStorageKey(params.tokenToRevoke);
+		if (!key) {
+			throw new BizError('Invalid public token');
+		}
+		await c.env.kv.delete(key);
 	},
 
 	async verifyUser(c, params) {

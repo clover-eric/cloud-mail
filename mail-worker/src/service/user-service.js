@@ -94,6 +94,14 @@ const userService = {
 		return userId;
 	},
 
+	async upgradePasswordHash(c, userId, oldPasswordHash, oldSalt, passwordHash, salt) {
+		await orm(c).update(user).set({ password: passwordHash, salt }).where(and(
+			eq(user.userId, userId),
+			eq(user.password, oldPasswordHash),
+			eq(user.salt, oldSalt)
+		)).run();
+	},
+
 	selectByEmailIncludeDel(c, email) {
 		return orm(c).select().from(user).where(sql`${user.email} COLLATE NOCASE = ${email}`).get();
 	},

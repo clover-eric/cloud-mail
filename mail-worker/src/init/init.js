@@ -1,6 +1,16 @@
 import settingService from '../service/setting-service';
 import userService from '../service/user-service';
 
+function safeStackFrames(error) {
+	if (!error || typeof error.stack !== 'string') return [];
+
+	return error.stack.split(/\r?\n/).slice(1, 9).flatMap((line) => {
+		const location = line.match(/(?:^|\/)([A-Za-z0-9_.-]+\.(?:js|mjs|cjs)):(\d+):(\d+)\)?\s*$/);
+		if (!location) return [];
+		return [`${location[1]}:${location[2]}:${location[3]}`];
+	});
+}
+
 async function runInitStage(stage, operation) {
 	console.info(`[init] stage=${stage} status=started`);
 	try {
@@ -8,6 +18,9 @@ async function runInitStage(stage, operation) {
 		console.info(`[init] stage=${stage} status=completed`);
 	} catch (error) {
 		console.error(`[init] stage=${stage} status=failed`);
+		for (const frame of safeStackFrames(error)) {
+			console.error(`[init] stage=${stage} stack=${frame}`);
+		}
 		throw error;
 	}
 }

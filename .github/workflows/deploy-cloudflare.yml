@@ -7,6 +7,12 @@ on:
       - "mail-worker/**"
       - "mail-vue/**"
   workflow_dispatch:
+    inputs:
+      remove_legacy_jwt_secret:
+        description: "For the JWT migration only: remove Wrangler vars omitted from wrangler-action.toml before uploading the encrypted secret."
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   Deploy-cloud-mail:
@@ -211,10 +217,17 @@ jobs:
         working-directory: ./mail-worker
         run: |
           echo "🚀 Starting deployment..."
-          # Keep existing dashboard variables until runtime secrets are updated.
+          # Preserve dashboard variables by default. For the approved one-time JWT migration,
+          # omit --keep-vars so Wrangler reapplies configured vars and removes the legacy plaintext jwt_secret.
+          DEPLOY_ARGS=(-c wrangler-action.toml)
+          if [[ "${{ inputs.remove_legacy_jwt_secret }}" == "true" ]]; then
+            echo "::notice::Replacing the legacy plaintext jwt_secret binding with the encrypted Worker secret."
+          else
+            DEPLOY_ARGS+=(--keep-vars)
+          fi
           # Capture Wrangler's exit status before any other shell command resets PIPESTATUS.
           set +e
-          pnpm wrangler deploy -c wrangler-action.toml --keep-vars 2>&1 \
+          pnpm wrangler deploy "${DEPLOY_ARGS[@]}" 2>&1 \
             | tee deploy.log \
             | grep -v "https://.*\.workers\.dev" \
             | sed -E 's/env\.domain .*/env.domain (***)/'

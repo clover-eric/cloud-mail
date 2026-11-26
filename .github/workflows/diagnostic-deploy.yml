@@ -14,6 +14,16 @@ on:
         required: true
         type: boolean
         default: false
+      run_init_once:
+        description: "Send one production initialization request only after the exact confirmation below."
+        required: false
+        type: boolean
+        default: false
+      confirm_init_once:
+        description: "Type exactly RUN_INIT_ON_PRODUCTION_ONCE to authorize the single POST."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -176,3 +186,24 @@ jobs:
             exit 1
           fi
           pnpm wrangler deploy --config wrangler-action.toml --keep-vars
+
+  initialize-production-once:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_init_once == true && inputs.confirm_init_once == 'RUN_INIT_ON_PRODUCTION_ONCE' && inputs.confirm_production_deploy == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      RUN_INIT_ONCE: ${{ inputs.run_init_once }}
+      CONFIRM_INIT_ONCE: ${{ inputs.confirm_init_once }}
+      CONFIRM_PRODUCTION_DEPLOY: ${{ inputs.confirm_production_deploy }}
+    steps:
+      - name: Checkout workflow scripts
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Send at most one production initialization request
+        run: node .github/scripts/initialize-production-once.mjs

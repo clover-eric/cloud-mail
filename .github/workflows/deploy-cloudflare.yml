@@ -255,29 +255,6 @@ jobs:
             printf '%s' "$PASSWORD" | pnpm wrangler secret put password --config wrangler-action.toml
           fi
 
-      - name: ♻️ Initialize database
-        run: |
-          echo "🛠️ Starting database initialization..."
-          sleep 15
-          
-          WORKER_URL="${CUSTOM_DOMAIN:+https://$CUSTOM_DOMAIN}"
-          WORKER_URL="${WORKER_URL:-${{ steps.deploy.outputs.worker_url }}}"
-          
-          if [ -z "$WORKER_URL" ]; then
-            echo "❌ Preview URL not available. Please set CUSTOM_DOMAIN."
-            exit 1
-          fi
-          
-          HTTP_CODE=$(printf 'header = "X-Init-Secret: %s"\n' "$JWT_SECRET" | curl -sS --config - -X POST -w "%{http_code}" -o response.txt "$WORKER_URL/api/init")
-          RESPONSE_BODY=$(cat response.txt)
-
-          if [ "$RESPONSE_BODY" = "success" ]; then
-            echo "✅ Setup completed."
-          else
-            echo "❌ Failed. HTTP: $HTTP_CODE, Response: $RESPONSE_BODY"
-            exit 1
-          fi
-
       - name: 🗑️ Delete workflow runs
         uses: GitRML/delete-workflow-runs@main
         continue-on-error: true

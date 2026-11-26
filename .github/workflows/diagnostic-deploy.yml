@@ -1,0 +1,178 @@
+name: Manual diagnostic deploy (code only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_ref:
+        description: "Source branch to deploy"
+        required: true
+        type: choice
+        options:
+          - fix/init-stage-diagnostics-2026-11-26
+      confirm_production_deploy:
+        description: "Confirm deployment to the existing production Worker"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-mail-diagnostic-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_ref == 'fix/init-stage-diagnostics-2026-11-26' && inputs.confirm_production_deploy
+    runs-on: ubuntu-latest
+    env:
+      NAME: ${{ secrets.NAME || vars.NAME || 'cloud-mail' }}
+      CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN || vars.CUSTOM_DOMAIN }}
+      DOMAIN: ${{ secrets.DOMAIN || vars.DOMAIN }}
+      ADMIN: ${{ secrets.ADMIN || vars.ADMIN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID || vars.D1_DATABASE_ID }}
+      KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID || vars.KV_NAMESPACE_ID }}
+      R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || vars.R2_BUCKET_NAME }}
+      PROJECT_LINK: ${{ secrets.PROJECT_LINK || vars.PROJECT_LINK }}
+      AI_MODEL: ${{ secrets.AI_MODEL || vars.AI_MODEL || '@cf/meta/llama-3.1-8b-instruct-fast' }}
+      EMAIL: ${{ secrets.EMAIL || vars.EMAIL }}
+      ANALYSIS_CACHE: ${{ secrets.ANALYSIS_CACHE || vars.ANALYSIS_CACHE || 'false' }}
+
+    steps:
+      - name: Checkout selected diagnostic source branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deploy_ref }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4.1.0
+        with:
+          version: 11
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: "./mail-worker/pnpm-lock.yaml"
+
+      - name: Install Worker dependencies
+        working-directory: ./mail-worker
+        run: pnpm install --frozen-lockfile
+
+      - name: Disable Wrangler telemetry
+        working-directory: ./mail-worker
+        run: pnpm wrangler telemetry disable
+
+      - name: Validate existing production target and prepare deploy config
+        working-directory: ./mail-worker
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$NAME" != "cloud-mail" ]]; then
+            echo "::error::Refusing to deploy because the configured Worker name is not the approved production target."
+            exit 1
+          fi
+          if [[ "$CUSTOM_DOMAIN" != "i30.ltd" ]]; then
+            echo "::error::Refusing to deploy because the configured custom domain does not match i30.ltd."
+            exit 1
+          fi
+          if [[ -z "$CLOUDFLARE_ACCOUNT_ID" || -z "$D1_DATABASE_ID" || -z "$KV_NAMESPACE_ID" ]]; then
+            echo "::error::Missing existing Cloudflare account, D1, or KV identifier; this workflow never creates resources."
+            exit 1
+          fi
+          if [[ -z "$ADMIN" ]]; then
+            echo "::error::The existing ADMIN configuration is required."
+            exit 1
+          fi
+          if ! jq -e 'type == "array"' <<< "$DOMAIN" >/dev/null; then
+            echo "::error::The existing DOMAIN setting must be a JSON array."
+            exit 1
+          fi
+          if [[ ! -f wrangler-action.toml ]]; then
+            echo "::error::Expected the selected branch deployment template was not found."
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          config = Path("wrangler-action.toml")
+          text = config.read_text()
+          text = text.replace('"${DOMAIN}"', os.environ["DOMAIN"])
+          replacements = {
+              "${NAME}": os.environ["NAME"],
+              "${CUSTOM_DOMAIN}": os.environ["CUSTOM_DOMAIN"],
+              "${ADMIN}": os.environ["ADMIN"],
+              "${D1_DATABASE_ID}": os.environ["D1_DATABASE_ID"],
+              "${KV_NAMESPACE_ID}": os.environ["KV_NAMESPACE_ID"],
+              "${R2_BUCKET_NAME}": os.environ.get("R2_BUCKET_NAME", ""),
+              "${PROJECT_LINK}": os.environ.get("PROJECT_LINK", ""),
+              "${ANALYSIS_CACHE}": os.environ.get("ANALYSIS_CACHE", "false"),
+              "${AI_MODEL}": os.environ.get("AI_MODEL", "@cf/meta/llama-3.1-8b-instruct-fast"),
+          }
+          for placeholder, value in replacements.items():
+              text = text.replace(placeholder, value)
+
+          if not os.environ.get("R2_BUCKET_NAME"):
+              lines = text.splitlines()
+              result = []
+              skipping = False
+              for line in lines:
+                  if line.strip() == "[[r2_buckets]]":
+                      skipping = True
+                      continue
+                  if skipping and not line.strip():
+                      skipping = False
+                      continue
+                  if not skipping:
+                      result.append(line)
+              text = "\n".join(result) + "\n"
+
+          if not os.environ.get("PROJECT_LINK"):
+              text = "\n".join(
+                  line for line in text.splitlines()
+                  if not line.lstrip().startswith("project_link =")
+              ) + "\n"
+
+          if os.environ.get("EMAIL"):
+              text += '\n[[send_email]]\nname = "email"\n'
+
+          if "${" in text:
+              raise SystemExit("Unresolved deployment template placeholder; refusing to deploy.")
+          parsed = tomllib.loads(text)
+          if parsed.get("name") != "cloud-mail":
+              raise SystemExit("Generated config does not target the approved Worker.")
+          if parsed.get("routes", [{}])[0].get("pattern") != "i30.ltd":
+              raise SystemExit("Generated config does not preserve the approved custom domain.")
+          if parsed.get("d1_databases", [{}])[0].get("database_id") != os.environ["D1_DATABASE_ID"]:
+              raise SystemExit("Generated config does not preserve the existing D1 binding.")
+          if parsed.get("kv_namespaces", [{}])[0].get("id") != os.environ["KV_NAMESPACE_ID"]:
+              raise SystemExit("Generated config does not preserve the existing KV binding.")
+          durable_bindings = parsed.get("durable_objects", {}).get("bindings", [])
+          if not any(binding.get("name") == "ws" and binding.get("class_name") == "MailHub" for binding in durable_bindings):
+              raise SystemExit("Generated config does not preserve the existing MailHub binding.")
+          migrations = parsed.get("migrations", [])
+          if not any(migration.get("tag") == "v1" and "MailHub" in migration.get("new_sqlite_classes", []) for migration in migrations):
+              raise SystemExit("Generated config does not preserve the existing MailHub migration declaration.")
+          config.write_text(text)
+          PY
+
+      - name: Deploy selected Worker code only
+        working-directory: ./mail-worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo "::error::Cloudflare deploy token is unavailable."
+            exit 1
+          fi
+          pnpm wrangler deploy --config wrangler-action.toml --keep-vars

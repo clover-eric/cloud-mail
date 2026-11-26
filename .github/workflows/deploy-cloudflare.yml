@@ -211,14 +211,17 @@ jobs:
         working-directory: ./mail-worker
         run: |
           echo "🚀 Starting deployment..."
-          pnpm wrangler deploy -c wrangler-action.toml 2>&1 \
+          # Keep existing dashboard variables until runtime secrets are updated.
+          # Capture Wrangler's exit status before any other shell command resets PIPESTATUS.
+          set +e
+          pnpm wrangler deploy -c wrangler-action.toml --keep-vars 2>&1 \
             | tee deploy.log \
             | grep -v "https://.*\.workers\.dev" \
-            | sed -E 's/env\.domain .*/env.domain (***)/' \
-            || true
-          
+            | sed -E 's/env\.domain .*/env.domain (***)/'
           DEPLOY_EXIT_CODE=${PIPESTATUS[0]}
+          set -e
           if [ $DEPLOY_EXIT_CODE -ne 0 ]; then
+            echo "❌ Wrangler deployment failed (exit $DEPLOY_EXIT_CODE)."
             exit 1
           fi
           

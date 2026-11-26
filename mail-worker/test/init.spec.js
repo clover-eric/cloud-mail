@@ -24,9 +24,11 @@ afterEach(() => {
 });
 
 describe('initialization diagnostics', () => {
-	it('logs only the failed stage identifier when a stage throws', async () => {
+	it('logs the failed stage and safe stack locations without the error message', async () => {
 		const sensitiveError = 'private@example.com and secret-value';
-		const intDb = vi.spyOn(dbInit, 'intDB').mockRejectedValue(new Error(sensitiveError));
+		const intDb = vi.spyOn(dbInit, 'intDB').mockImplementation(() => {
+			throw new Error(sensitiveError);
+		});
 		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
 		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -34,6 +36,8 @@ describe('initialization diagnostics', () => {
 
 		expect(info).toHaveBeenCalledWith('[init] stage=intDB status=started');
 		expect(error).toHaveBeenCalledWith('[init] stage=intDB status=failed');
+		const errorMessages = error.mock.calls.map(([message]) => message);
+		expect(errorMessages.some((message) => /^\[init\] stage=intDB stack=.+\.js:\d+:\d+$/.test(message))).toBe(true);
 		const logOutput = JSON.stringify([...info.mock.calls, ...error.mock.calls]);
 		expect(logOutput).not.toContain('private@example.com');
 		expect(logOutput).not.toContain('secret-value');

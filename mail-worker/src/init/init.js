@@ -1,6 +1,17 @@
 import settingService from '../service/setting-service';
 import userService from '../service/user-service';
 
+async function runInitStage(stage, operation) {
+	console.info(`[init] stage=${stage} status=started`);
+	try {
+		await operation();
+		console.info(`[init] stage=${stage} status=completed`);
+	} catch (error) {
+		console.error(`[init] stage=${stage} status=failed`);
+		throw error;
+	}
+}
+
 const dbInit = {
 	async init(c, secret) {
 
@@ -9,22 +20,28 @@ const dbInit = {
 			return c.text('Unauthorized', 401);
 		}
 
-		await this.intDB(c);
-		await this.v2_3DB(c);
-		await this.v2_4DB(c);
-		await this.v2_5DB(c);
-		await this.v2_6DB(c);
-		await this.v2_7DB(c);
-		await this.v2_8DB(c);
-		await this.v3_0DB(c);
-		await this.v3_1DB(c);
-		await this.v3_2DB(c);
-		await this.v3_3DB(c);
-		await this.v3_4DB(c);
-		await this.v3_5DB(c);
-		await this.v3_6DB(c);
-		await userService.initAdmin(c);
-		await settingService.refresh(c);
+		const stages = [
+			['intDB', () => this.intDB(c)],
+			['v2_3DB', () => this.v2_3DB(c)],
+			['v2_4DB', () => this.v2_4DB(c)],
+			['v2_5DB', () => this.v2_5DB(c)],
+			['v2_6DB', () => this.v2_6DB(c)],
+			['v2_7DB', () => this.v2_7DB(c)],
+			['v2_8DB', () => this.v2_8DB(c)],
+			['v3_0DB', () => this.v3_0DB(c)],
+			['v3_1DB', () => this.v3_1DB(c)],
+			['v3_2DB', () => this.v3_2DB(c)],
+			['v3_3DB', () => this.v3_3DB(c)],
+			['v3_4DB', () => this.v3_4DB(c)],
+			['v3_5DB', () => this.v3_5DB(c)],
+			['v3_6DB', () => this.v3_6DB(c)],
+			['initAdmin', () => userService.initAdmin(c)],
+			['refreshSettings', () => settingService.refresh(c)],
+		];
+
+		for (const [stage, operation] of stages) {
+			await runInitStage(stage, operation);
+		}
 		return c.text('success');
 	},
 

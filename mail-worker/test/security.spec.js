@@ -11,10 +11,17 @@ describe('security primitives', () => {
 		const password = 'correct horse battery staple';
 		const { salt, hash } = await cryptoUtils.hashPassword(password);
 
-		expect(hash).toMatch(/^pbkdf2-sha256\$600000\$/);
+		expect(hash).toMatch(/^pbkdf2-sha256\$100000\$/);
 		expect(await cryptoUtils.verifyPassword(password, salt, hash)).toBe(true);
 		expect(await cryptoUtils.verifyPassword('incorrect password', salt, hash)).toBe(false);
 		expect(cryptoUtils.needsRehash(hash)).toBe(false);
+	});
+
+	it('rejects password hashes above the production PBKDF2 iteration ceiling', async () => {
+		const hash = `pbkdf2-sha256$600000$${'A'.repeat(44)}`;
+
+		expect(await cryptoUtils.verifyPassword('password', 'salt', hash)).toBe(false);
+		expect(cryptoUtils.needsRehash(hash)).toBe(true);
 	});
 
 	it('still verifies legacy SHA-256 records so login can migrate them', async () => {

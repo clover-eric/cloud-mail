@@ -1,7 +1,8 @@
 const encoder = new TextEncoder();
 const PASSWORD_SCHEME = 'pbkdf2-sha256';
-const PBKDF2_ITERATIONS = 600_000;
-const MAX_VERIFY_ITERATIONS = 1_000_000;
+// Cloudflare Workers production Web Crypto rejects PBKDF2 counts above 100,000.
+const PBKDF2_ITERATIONS = 100_000;
+const MAX_VERIFY_ITERATIONS = 100_000;
 
 function toBase64(bytes) {
 	return btoa(String.fromCharCode(...new Uint8Array(bytes)));

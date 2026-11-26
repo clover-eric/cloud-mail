@@ -4,6 +4,7 @@ import userService from './service/user-service';
 import verifyRecordService from './service/verify-record-service';
 import emailService from './service/email-service';
 import r2Service from './service/r2-service';
+import attService from './service/att-service';
 import oauthService from './service/oauth-service';
 import analysisService from './service/analysis-service';
 import { handleWsUpgrade } from './websocket/connect';
@@ -30,13 +31,19 @@ export default {
 			return app.fetch(req, env, ctx);
 		}
 
-		if (url.pathname.startsWith('/oss/')) {
-			const key = url.pathname.slice('/oss/'.length);
-			const resp = await r2Service.toObjResp({ env }, key);
-			return resp || new Response('Not Found', { status: 404 });
+		if (url.pathname.startsWith('/oss/') || url.pathname.startsWith('/attachments/')) {
+			const prefix = url.pathname.startsWith('/oss/') ? '/oss/' : '/attachments/';
+			let key;
+			try {
+				key = decodeURIComponent(url.pathname.slice(prefix.length));
+			} catch {
+				return new Response('Not Found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+			}
+			const resp = await attService.toAuthorizedObjResp({ env }, key, url.searchParams.get('token'));
+			return resp || new Response('Not Found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
 		}
 
-		 if (['/static/','/attachments/'].some(p => url.pathname.startsWith(p))) {
+		 if (url.pathname.startsWith('/static/')) {
 			 const resp = await r2Service.toObjResp({ env }, url.pathname.substring(1));
 			 return resp || new Response('Not Found', { status: 404 });
 		 }

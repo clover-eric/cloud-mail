@@ -10,7 +10,10 @@ import { v4 as uuidv4 } from 'uuid';
 import domainUtils from '../utils/domain-uitls';
 import settingService from "./setting-service";
 import proxyService from './proxy-service';
+import jwtUtils from '../utils/jwt-utils';
 import { ATT_CACHE_CONTROL, isDangerousAttType, isSafeInlineAtt } from '../utils/att-headers';
+
+const ATTACHMENT_LINK_TTL_SECONDS = 60 * 60;
 
 const attService = {
 
@@ -40,10 +43,10 @@ const attService = {
 		await orm(c).insert(att).values(attachments).run();
 	},
 
-	list(c, params, userId) {
+	async list(c, params, userId) {
 		const { emailId } = params;
 
-		return orm(c).select().from(att).where(
+		const rows = await orm(c).select().from(att).where(
 			and(
 				eq(att.emailId, emailId),
 				eq(att.userId, userId),
@@ -51,6 +54,70 @@ const attService = {
 				isNull(att.contentId)
 			)
 		).all();
+		return this.addDownloadUrls(c, rows);
+	},
+
+	async addDownloadUrls(c, attachments) {
+		await Promise.all(attachments.map(async attachment => {
+			const token = await jwtUtils.generateToken(c, {
+				purpose: 'attachment-download',
+					attId: attachment.attId,
+					userId: attachment.userId,
+					key: attachment.key
+				}, ATTACHMENT_LINK_TTL_SECONDS);
+			const encodedKey = String(attachment.key).split('/').map(encodeURIComponent).join('/');
+			const url = new URL(`/oss/${encodedKey}`, c.req.url);
+			url.searchParams.set('token', token);
+			attachment.downloadUrl = url.toString();
+		}));
+		return attachments;
+	},
+
+	async addEmailDownloadUrls(c, emailRows, attachmentRows = null) {
+		if (!emailRows.length) return emailRows;
+		const emailIds = emailRows.map(row => row.emailId);
+		const attachments = attachmentRows || await orm(c).select().from(att).where(inArray(att.emailId, emailIds)).all();
+		await Promise.all(emailRows.map(async emailRow => {
+			const emailAttachments = attachments.filter(item => item.emailId === emailRow.emailId);
+			await this.addDownloadUrls(c, emailAttachments);
+			emailRow.attList = emailAttachments.filter(item => item.type === attConst.type.ATT);
+			emailRow.content = this.rewriteAttachmentUrls(emailRow.content, emailAttachments);
+		}));
+		return emailRows;
+	},
+
+	rewriteAttachmentUrls(content, attachments) {
+		if (!content) return content;
+		let rewritten = content;
+		for (const attachment of attachments) {
+			if (!attachment.key || !attachment.downloadUrl) continue;
+			rewritten = rewritten.split(`{{domain}}${attachment.key}`).join(attachment.downloadUrl);
+		}
+		return rewritten;
+	},
+
+	async toAuthorizedObjResp(c, key, token) {
+		if (!key || !token) return null;
+		const payload = await jwtUtils.verifyToken(c, token);
+		const now = Math.floor(Date.now() / 1000);
+		if (!payload || payload.purpose !== 'attachment-download' ||
+			!Number.isInteger(payload.exp) || payload.exp <= now ||
+			!Number.isInteger(payload.attId) || !Number.isInteger(payload.userId) || payload.key !== key) {
+			return null;
+		}
+
+		const row = await orm(c).select({ attId: att.attId }).from(att).where(and(
+			eq(att.attId, payload.attId),
+			eq(att.userId, payload.userId),
+			eq(att.key, key)
+		)).get();
+		if (!row) return null;
+		const response = await r2Service.toObjResp(c, key);
+		if (!response) return null;
+		const headers = new Headers(response.headers);
+		headers.set('Cache-Control', 'private, no-store');
+		headers.set('X-Content-Type-Options', 'nosniff');
+		return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 	},
 
 	async toImageUrlHtml(c, content) {

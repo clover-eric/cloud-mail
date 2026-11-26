@@ -251,8 +251,15 @@ const loginService = {
 			throw new BizError(t('isBanUser'));
 		}
 
-		if (!await cryptoUtils.verifyPassword(password, userRow.salt, userRow.password) && !noVerifyPwd) {
-			throw new BizError(t('IncorrectPwd'));
+		if (!noVerifyPwd) {
+			const passwordValid = await cryptoUtils.verifyPassword(password, userRow.salt, userRow.password);
+			if (!passwordValid) {
+				throw new BizError(t('IncorrectPwd'));
+			}
+			if (cryptoUtils.needsRehash(userRow.password)) {
+				const { salt, hash } = await cryptoUtils.hashPassword(password);
+				await userService.upgradePasswordHash(c, userRow.userId, userRow.password, userRow.salt, hash, salt);
+			}
 		}
 
 		const uuid = uuidv4();

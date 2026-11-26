@@ -5,6 +5,7 @@ import KvConst from '../const/kv-const';
 import dayjs from 'dayjs';
 import userService from '../service/user-service';
 import permService from '../service/perm-service';
+import publicTokenUtils from '../utils/public-token';
 import { t } from '../i18n/i18n'
 import app from '../hono/hono';
 
@@ -16,6 +17,7 @@ const exclude = [
 	'/webhooks',
 	'/init',
 	'/public/genToken',
+	'/public/revokeToken',
 	'/telegram',
 	'/test',
 	'/oauth'
@@ -102,11 +104,24 @@ app.use('*', async (c, next) => {
 	}
 
 	if (path.startsWith('/public')) {
+		const requiredScopeByPath = {
+			'/public/emailList': 'email:read',
+			'/public/addUser': 'user:create'
+		};
+		const requiredScope = requiredScopeByPath[path];
+		if (!requiredScope) {
+			throw new BizError(t('unauthorized'), 403);
+		}
 
-		const userPublicToken = await c.env.kv.get(KvConst.PUBLIC_KEY);
 		const publicToken = c.req.header(constant.TOKEN_HEADER);
-		if (publicToken !== userPublicToken) {
+		const tokenKey = await publicTokenUtils.publicTokenStorageKey(publicToken);
+		const tokenRecord = tokenKey ? await c.env.kv.get(tokenKey, { type: 'json' }) : null;
+		if (!tokenRecord || !Array.isArray(tokenRecord.scopes) || !Number.isFinite(tokenRecord.expiresAt) || tokenRecord.expiresAt <= Date.now()) {
+			if (tokenKey && tokenRecord) await c.env.kv.delete(tokenKey);
 			throw new BizError(t('publicTokenFail'), 401);
+		}
+		if (!tokenRecord.scopes.includes(requiredScope)) {
+			throw new BizError(t('unauthorized'), 403);
 		}
 		return await next();
 	}

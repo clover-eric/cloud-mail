@@ -52,8 +52,7 @@ new_sqlite_classes = ["MailHub"]
 #orm_log = false			# SQL logging
 #domain = []				# Mail domains; multiple allowed, e.g. ["example1.com","example2.com"]
 #admin = ""					# Admin email, e.g. admin@example.com
-#password = ""				# Admin password; used on init if the admin user does not exist
-#jwt_secret = ""			# JWT secret; any random string
+# Provision `password` and `jwt_secret` with `wrangler secret put`; do not place them under [vars].
 
 [build]
 command = "pnpm --prefix ../mail-vue install && pnpm --prefix ../mail-vue run build"

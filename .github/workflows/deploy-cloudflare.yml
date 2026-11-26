@@ -18,9 +18,9 @@ jobs:
       CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN || vars.CUSTOM_DOMAIN }}
       DOMAIN: ${{ secrets.DOMAIN || vars.DOMAIN }}
       ADMIN: ${{ secrets.ADMIN || vars.ADMIN }}
-      PASSWORD: ${{ secrets.PASSWORD || vars.PASSWORD }}
-      JWT_SECRET: ${{ secrets.JWT_SECRET || vars.JWT_SECRET }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || vars.CLOUDFLARE_API_TOKEN }}
+      PASSWORD: ${{ secrets.PASSWORD }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || vars.CLOUDFLARE_ACCOUNT_ID }}
       D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID || vars.D1_DATABASE_ID }}
       KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID || vars.KV_NAMESPACE_ID }}
@@ -65,8 +65,8 @@ jobs:
           
           echo "🔐 Starting environment setup..."
           
-          if [ -z "$JWT_SECRET" ] || grep -q '[?%#/\\]' <<< "$JWT_SECRET"; then
-            echo "❌ JWT_SECRET variable is empty or contains invalid characters (?, %, #, /, \\)."
+          if ! [[ "$JWT_SECRET" =~ ^[A-Za-z0-9_-]{32,}$ ]]; then
+            echo "❌ JWT_SECRET must be at least 32 URL-safe characters."
             exit 1
           fi
           
@@ -120,8 +120,6 @@ jobs:
           sed -i "s|\${CUSTOM_DOMAIN}|${CUSTOM_DOMAIN}|g" "$CONFIG_FILE"
           sed -i "s|\"\${DOMAIN}\"|${DOMAIN}|g" "$CONFIG_FILE"
           sed -i "s|\${ADMIN}|${ADMIN}|g" "$CONFIG_FILE"
-          sed -i "s|\${PASSWORD}|${PASSWORD}|g" "$CONFIG_FILE"
-          sed -i "s|\${JWT_SECRET}|${JWT_SECRET}|g" "$CONFIG_FILE"
           sed -i "s|\${R2_BUCKET_NAME}|${R2_BUCKET_NAME}|g" "$CONFIG_FILE"
           sed -i "s|\${PROJECT_LINK}|${PROJECT_LINK}|g" "$CONFIG_FILE"
           sed -i "s|\${ANALYSIS_CACHE}|${ANALYSIS_CACHE}|g" "$CONFIG_FILE"
@@ -233,6 +231,14 @@ jobs:
           echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
           echo "✅ Setup completed."
 
+      - name: 🔐 Upload runtime secrets
+        working-directory: ./mail-worker
+        run: |
+          printf '%s' "$JWT_SECRET" | pnpm wrangler secret put jwt_secret --config wrangler-action.toml
+          if [ -n "$PASSWORD" ]; then
+            printf '%s' "$PASSWORD" | pnpm wrangler secret put password --config wrangler-action.toml
+          fi
+
       - name: ♻️ Initialize database
         run: |
           echo "🛠️ Starting database initialization..."
@@ -246,7 +252,7 @@ jobs:
             exit 1
           fi
           
-          HTTP_CODE=$(curl -sL -w "%{http_code}" -o response.txt "$WORKER_URL/api/init/${JWT_SECRET}")
+          HTTP_CODE=$(printf 'header = "X-Init-Secret: %s"\n' "$JWT_SECRET" | curl -sS --config - -X POST -w "%{http_code}" -o response.txt "$WORKER_URL/api/init")
           RESPONSE_BODY=$(cat response.txt)
 
           if [ "$RESPONSE_BODY" = "success" ]; then

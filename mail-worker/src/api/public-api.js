@@ -7,6 +7,11 @@ app.post('/public/genToken', async (c) => {
 	return c.json(result.ok(data));
 });
 
+app.post('/public/revokeToken', async (c) => {
+	await publicService.revokeToken(c, await c.req.json());
+	return c.json(result.ok());
+});
+
 app.post('/public/emailList', async (c) => {
 	const list = await publicService.emailList(c, await c.req.json());
 	return c.json(result.ok(list));

@@ -22,7 +22,9 @@ const telegramService = {
 
 		const result = await jwtUtils.verifyToken(c, token);
 
-		if (!result) {
+		if (!result || result.purpose !== 'telegram-email' ||
+			!Number.isInteger(result.exp) || result.exp <= Math.floor(Date.now() / 1000) ||
+			!Number.isInteger(result.emailId)) {
 			return emailTextTemplate('Access denied')
 		}
 
@@ -50,7 +52,10 @@ const telegramService = {
 
 		const tgChatIds = tgChatId.split(',');
 
-		const jwtToken = await jwtUtils.generateToken(c, { emailId: email.emailId })
+		const jwtToken = await jwtUtils.generateToken(c, {
+			purpose: 'telegram-email',
+			emailId: email.emailId
+		}, 24 * 60 * 60)
 
 		const webAppUrl = customDomain ? `${domainUtils.toOssDomain(customDomain)}/api/telegram/getEmail/${jwtToken}` : 'https://www.cloudflare.com/404'
 		const inlineKeyboard = [

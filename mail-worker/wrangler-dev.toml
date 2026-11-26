@@ -51,6 +51,4 @@ ai_model = ""
 analysis_cache = false
 orm_log = true
 domain = ["example.com", "example2.com", "example3.com", "example4.com"]
-admin = "admin@example.com"
-password = ""
-jwt_secret = "b7f29a1d-18e2-4d3b-941f-f6b2c97c02fd"
+# Put admin, password and jwt_secret in an untracked .dev.vars file before local auth testing.

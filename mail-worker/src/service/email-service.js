@@ -720,10 +720,10 @@ const emailService = {
 			await attService.saveSendAtt(c, attachments, userId, accountId, emailResult.emailId);
 		}
 
-		const attList = await attService.selectByEmailIds(c, [emailResult.emailId]);
-		emailResult.attList = attList;
+			const attList = await attService.selectByEmailIds(c, [emailResult.emailId]);
+			await attService.addEmailDownloadUrls(c, [emailResult], attList);
 
-		const dateStr = dayjs().format('YYYY-MM-DD');
+			const dateStr = dayjs().format('YYYY-MM-DD');
 		let daySendTotal = await c.env.kv.get(kvConst.SEND_DAY_COUNT + dateStr);
 
 		//记录每天发件次数统计
@@ -1375,21 +1375,9 @@ const emailService = {
 	},
 
 	async emailAddAtt(c, list) {
-
-		const emailIds = list.map(item => item.emailId);
-
-		if (emailIds.length > 0) {
-
-			const attList = await attService.selectByEmailIds(c, emailIds);
-
-			list.forEach(emailRow => {
-				const atts = attList.filter(attRow => attRow.emailId === emailRow.emailId);
-				emailRow.attList = atts;
-			});
-		}
-
 		// 完整邮件查询：给附件后，把正文外链图改成 /proxy?url=。
 		await proxyService.rewriteList(c, list);
+		await attService.addEmailDownloadUrls(c, list);
 	},
 
 	async restoreByUserId(c, userId) {

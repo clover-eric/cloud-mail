@@ -54,16 +54,16 @@
             <div class="att-box">
 
               <div class="att-item" v-for="att in email.attList" :key="att.attId">
-                <div class="att-icon" @click="showImage(att.key)">
+                <div class="att-icon" @click="showImage(att)">
                   <Icon v-bind="getIconByName(att.filename)" />
                 </div>
-                <div class="att-name" @click="showImage(att.key)">
+                <div class="att-name" @click="showImage(att)">
                   {{ att.filename }}
                 </div>
                 <div class="att-size">{{ formatBytes(att.size) }}</div>
                 <div class="opt-icon att-icon">
-                  <Icon v-if="isImage(att.filename)" icon="hugeicons:view" width="22" height="22" @click="showImage(att.key)"/>
-                  <a :href="cvtR2Url(att.key)" download>
+                  <Icon v-if="isImage(att.filename)" icon="hugeicons:view" width="22" height="22" @click="showImage(att)"/>
+                  <a :href="att.downloadUrl" download>
                     <Icon icon="system-uicons:push-down" width="22" height="22"/>
                   </a>
                 </div>
@@ -93,9 +93,7 @@ import {useAccountStore} from "@/store/account.js";
 import {formatDetailDate} from "@/utils/day.js";
 import {starAdd, starCancel} from "@/request/star.js";
 import {getExtName, formatBytes} from "@/utils/file-utils.js";
-import {cvtR2Url,toOssDomain} from "@/utils/convert.js";
 import {getIconByName} from "@/utils/icon-utils.js";
-import {useSettingStore} from "@/store/setting.js";
 import {allEmailDelete} from "@/request/all-email.js";
 import {useUiStore} from "@/store/ui.js";
 import {useI18n} from "vue-i18n";
@@ -103,7 +101,6 @@ import {EmailUnreadEnum} from "@/enums/email-enum.js";
 const { t } = useI18n()
 
 const uiStore = useUiStore();
-const settingStore = useSettingStore();
 const accountStore = useAccountStore();
 const emailStore = useEmailStore();
 const router = useRouter()
@@ -241,13 +238,12 @@ function toMessage(message) {
 
 function formatImage(content) {
   content = content || '';
-  const domain = settingStore.settings.r2Domain;
-  return  content.replace(/{{domain}}/g, toOssDomain(domain) + '/');
+  return content.replace(/{{domain}}/g, '/oss/');
 }
 
-function showImage(key) {
-  if (!isImage(key)) return;
-  const url = cvtR2Url(key)
+function showImage(att) {
+  if (!isImage(att?.filename) || !att?.downloadUrl) return;
+  const url = att.downloadUrl
   srcList.length = 0
   srcList.push(url)
   showPreview.value = true
